@@ -1,0 +1,429 @@
+\documentclass{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[spanish]{babel}
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{hyperref}
+
+% pdflatex no trae definida la flecha U+2192 (la usamos en las rutas de menús)
+\ifdefined\DeclareUnicodeCharacter
+  \DeclareUnicodeCharacter{2192}{\ensuremath{\rightarrow}}
+\fi
+
+% ---------- Encabezado institucional ----------
+% Requiere lcd.png y logos.png en la misma carpeta que este .tex
+\newcommand{\encabezadocatedra}{%
+  \noindent
+  \begin{minipage}[c]{0.36\textwidth}%
+    \includegraphics[height=14mm]{lcd.png}%
+  \end{minipage}%
+  \hfill
+  \begin{minipage}[c]{0.52\textwidth}%
+    \raggedleft
+    \includegraphics[height=12mm]{logos.png}%
+  \end{minipage}%
+  \par\vspace{3mm}%
+  \noindent\rule{\textwidth}{0.4pt}%
+  \par\vspace{6mm}%
+}
+
+% Redefinimos \maketitle para que el encabezado quede en la misma pagina
+% que el titulo (el \maketitle original de article hace un \newpage).
+\makeatletter
+\renewcommand{\@maketitle}{%
+  \encabezadocatedra
+  \begin{center}%
+    {\LARGE\bfseries \@title \par}%
+    \vskip 1.2em%
+    {\large \@author \par}%
+  \end{center}%
+  \par\vskip 1.5em%
+}
+\renewcommand{\maketitle}{\par\@maketitle\thispagestyle{plain}%
+  \setcounter{footnote}{0}}
+\makeatother
+% ----------------------------------------------
+
+\title{Trabajo Práctico 1: Primeros pasos en QGIS\\
+\large Proximidad, medición y proyecciones}
+\author{Análisis de Datos Espaciales}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Objetivo y estructura}
+
+Este trabajo práctico tiene tres partes que se resuelven con el mismo software y que están ordenadas por \textbf{escala de trabajo}: un barrio, un país, un continente y medio.
+
+\begin{center}
+\begin{tabular}{llll}
+    \toprule
+    Parte & Escala & Tema & Qué se aprende \\
+    \midrule
+    A & Un barrio de Londres & Cólera, 1854 & Proximidad y agregación por zonas \\
+    B & Argentina & Cuencas hídricas & Medición y generalización \\
+    C & Bicontinental & El mapa oficial & Proyecciones y composición \\
+    \bottomrule
+\end{tabular}
+\end{center}
+
+El orden no es casual. Hay un hilo que las atraviesa —\textbf{el sistema de coordenadas}— y que en cada parte se comporta distinto: en la Parte A es casi irrelevante, en la Parte B empieza a molestar, y en la Parte C se explica. Prestale atención cuando aparezca.
+
+\section{Parte A: John Snow y la epidemia de cólera de 1854}
+
+\subsection{El caso}
+
+A mediados del siglo XIX la explicación aceptada para el cólera era la \emph{teoría miasmática}: la enfermedad se transmitiría por aire corrompido, y las condiciones atmosféricas explicarían los brotes. El médico John Snow sostenía una hipótesis distinta, minoritaria y mal recibida: que el contagio venía del \textbf{agua contaminada}.
+
+En agosto y septiembre de 1854 un brote violentísimo mató a cientos de personas en pocos días en el Soho londinense. Snow recorrió el barrio casa por casa, anotó dónde había muerto cada persona, y volcó los datos en un mapa junto con la ubicación de las bombas de agua públicas del vecindario. Ese mapa es uno de los documentos fundacionales de la epidemiología y del análisis espacial.
+
+Lo que vamos a hacer acá no es aplicarle a Snow una herramienta moderna: es \textbf{reconstruir su propio método}. En la segunda edición de su libro, en 1855, Snow dibujó sobre el mapa una línea que delimitaba el área desde la cual la bomba de Broad Street era la más cercana \emph{caminando}. Esa construcción es, en esencia, un polígono de Voronoi.
+
+\subsection{Los datos}
+
+Vamos a usar la digitalización del mapa original publicada por Montes Galbán (2021), disponible en:
+
+\begin{center}
+\url{https://www.researchgate.net/publication/354784162}
+\end{center}
+
+También vas a encontrar el ZIP en el campus. Son dos capas de puntos: \texttt{Casos\_colera}, con un campo \texttt{muertes} que indica cuántas personas murieron en cada dirección, y \texttt{Bombas\_de\_agua}, con el nombre de cada bomba en el campo \texttt{nombres\_ca}.
+
+\subsection{Preparar el proyecto}
+
+\begin{enumerate}
+    \item Cargá las dos capas con \textbf{Capa → Añadir capa → Añadir capa vectorial}.
+    \item Agregá un mapa base: en el \textbf{Panel Navegador}, buscá \textbf{XYZ Tiles → OpenStreetMap} y arrastralo al lienzo. Movelo al final de la lista de capas.
+    \item Etiquetá las bombas: \textbf{Propiedades → Etiquetas → Etiquetas simples}, campo \texttt{nombres\_ca}.
+    \item Aplicá a \texttt{Casos\_colera} una simbología \textbf{graduada} por el campo \texttt{muertes}, con tamaño de símbolo creciente.
+    \item \textbf{Verificá el CRS de las capas} (clic derecho \textbf{→ Propiedades → Información}) y anotalo. Vamos a necesitar medir superficies más adelante, así que fijate si está en metros o en grados. Si estuviera en grados, reproyectá a un CRS métrico antes de seguir.
+\end{enumerate}
+
+\subsection{Explorar la tabla de atributos}
+
+Abrí la tabla de atributos de cada capa y anotá tres números que vas a necesitar:
+
+\begin{enumerate}
+    \item Cuántos registros tiene \texttt{Casos\_colera} (cada uno es una dirección, no una persona).
+    \item \textbf{Cuántas muertes hay en total.} Usá \textbf{Vectorial → Herramientas de análisis → Estadísticas básicas para campos} sobre el campo \texttt{muertes} y quedate con la suma.
+    \item \textbf{Cuántas bombas de agua hay.}
+\end{enumerate}
+
+\subsection{Construir las áreas de influencia}
+
+\begin{enumerate}
+    \item \textbf{Vectorial → Herramientas de geometría → Polígonos de Voronoi}.
+    \item Capa de entrada: \texttt{Bombas\_de\_agua}. En \textbf{Región buffer (\% de extensión)} poné 5, para que los polígonos cubran todos los casos.
+    \item Guardá el resultado como \texttt{voronoi\_bombas.shp} y movelo abajo de todo en el panel de capas.
+    \item Mirá el resultado: cada polígono contiene los puntos del plano para los cuales \emph{esa} bomba es la más cercana. Es una partición del espacio construida a partir de los datos, no un límite administrativo preexistente.
+\end{enumerate}
+
+\subsection{Contar las muertes en cada área}
+
+\begin{enumerate}
+    \item \textbf{Vectorial → Herramientas de análisis → Contar puntos en polígono}.
+    \item Polígonos: \texttt{voronoi\_bombas.shp}. Puntos: \texttt{Casos\_colera}.
+    \item \textbf{Campo de peso}: \texttt{muertes}. Esto es importante: sin el campo de peso contarías direcciones, no víctimas.
+    \item Guardá como \texttt{muertes\_por\_bomba.shp}.
+\end{enumerate}
+
+En la tabla de atributos vas a tener una columna nueva con el total de muertes de cada área de influencia.
+
+\subsection{Normalizar}
+
+Acá viene el paso que separa una observación de un resultado. El polígono de Broad Street es grande, y un polígono grande captura más muertes por el solo hecho de ser grande. Hay que corregir eso.
+
+\begin{enumerate}
+    \item Abrí la calculadora de campos sobre \texttt{muertes\_por\_bomba.shp}.
+    \item Creá un campo \texttt{sup\_ha} (decimal) con \texttt{\$area / 10000}.
+    \item Creá un campo \texttt{muertes\_ha} (decimal) dividiendo el conteo de muertes por \texttt{sup\_ha}.
+    \item Simbolizá los polígonos con estilo \textbf{graduado} por \texttt{muertes\_ha}.
+\end{enumerate}
+
+\subsection{Preguntas de la Parte A}
+
+\begin{enumerate}
+    \item \textbf{El denominador.} Armá una tabla con las bombas ordenadas de mayor a menor por cantidad de muertes, indicando también qué porcentaje del total le corresponde a cada una. Si las muertes se hubieran repartido por igual entre todas las bombas, ¿qué porcentaje le tocaría a cada una? ¿Cuántas veces más que eso tiene la bomba de Broad Street?
+
+    \item \textbf{El efecto del tamaño.} Ordená ahora las bombas por \texttt{muertes\_ha} en lugar de por muertes totales. ¿Cambia el orden? ¿Sigue destacándose la misma bomba? ¿Qué habrías concluido de más si te hubieras quedado solo con los valores absolutos?
+
+    \item \textbf{El supuesto del método.} Los polígonos de Voronoi se construyen con distancia en línea recta, pero la gente iba a buscar agua caminando por calles. ¿En qué dirección esperarías que se equivoque el método? ¿Qué dato adicional necesitarías para hacerlo bien?
+
+    \item \textbf{La falsación.} Describí qué patrón habrían mostrado los datos si la teoría miasmática hubiera sido correcta. ¿Se parece a lo que ves en el mapa? Esta pregunta es la más importante de la parte: un análisis que no puede fallar tampoco puede confirmar nada.
+
+    \item \textbf{El caso que no está en el mapa.} Una viuda que vivía en Hampstead, a varios kilómetros de Soho, murió de cólera durante el brote: se hacía llevar agua de la bomba de Broad Street porque le gustaba el sabor. Ese caso no aparece en esta base de datos. ¿Por qué un solo caso puede ser evidencia más fuerte que todo el mapa junto? ¿Qué habría hecho con ese dato un análisis basado en promedios espaciales?
+
+    \item \textbf{El CRS.} ¿En qué sistema de coordenadas estaban los datos? ¿Habría cambiado alguna de tus conclusiones si hubieras usado otro? Guardá la respuesta: vamos a volver sobre esto en las partes siguientes.
+\end{enumerate}
+
+\section{Parte B: la forma de las cuencas hídricas de la Argentina}
+
+\subsection{El problema}
+
+La forma de una cuenca condiciona su comportamiento hidrológico. Una cuenca redondeada concentra la escorrentía rápido: toda el agua llega al cauce principal más o menos al mismo tiempo, y eso produce crecidas súbitas e intensas. Una cuenca alargada la distribuye en el tiempo, con picos más suaves.
+
+El indicador clásico para cuantificar esto es el \textbf{índice de compacidad de Gravelius}, que compara el perímetro de la cuenca con el de un círculo de igual superficie:
+
+\begin{equation*}
+    I_c = \frac{P}{2\sqrt{\pi A}}
+\end{equation*}
+
+Es adimensional y vale exactamente 1 para un círculo perfecto. Cuanto más se aleja de 1, más irregular o alargada es la cuenca. La literatura hidrológica suele interpretarlo con una tabla de umbrales como esta:
+
+\begin{center}
+\begin{tabular}{ll}
+    \toprule
+    Valores de $I_c$ & Forma \\
+    \midrule
+    1,00 -- 1,25 & De casi redonda a oval redonda \\
+    1,25 -- 1,50 & De oval redonda a oval oblonga \\
+    1,50 -- 1,75 & De oval oblonga a rectangular oblonga \\
+    Mayor a 1,75 & Rectangular oblonga \\
+    \bottomrule
+\end{tabular}
+\end{center}
+
+Vamos a calcular el índice y después a poner esa tabla en duda.
+
+\subsection{Conseguir los datos}
+
+\begin{enumerate}
+    \item Entrá a las capas SIG del IGN:\\
+    \url{https://www.ign.gob.ar/NuestrasActividades/InformacionGeoespacial/CapasSIG}
+    \item Buscá la capa \textbf{Cuencas República Argentina COHIFE} y descargala en formato Shapefile. Descargá también el metadato.
+    \item Leé el metadato antes de usar el dato. Prestá atención a quién produce la información y quién la publica: no son el mismo organismo, y el IGN lo aclara explícitamente.
+    \item Cargá la capa en QGIS junto con un mapa base de OpenStreetMap.
+\end{enumerate}
+
+\subsection{Elegir tres cuencas}
+
+Elegí \textbf{tres cuencas ubicadas en latitudes bien distintas}: una del norte, una de la región pampeana y una patagónica. Que estén separadas importa para lo que viene después.
+
+Seleccionalas en el mapa o en la tabla de atributos y exportalas a una capa nueva con clic derecho \textbf{→ Exportar → Guardar objetos seleccionados como}, con el nombre \texttt{cuencas\_seleccion.shp}.
+
+\subsection{Preparar la medición}
+
+\begin{enumerate}
+    \item La capa del IGN está en \texttt{EPSG:4326}, es decir en grados. No se puede medir superficie en grados, así que hay que reproyectar.
+    \item Usá \textbf{Vectorial → Herramientas de gestión de datos → Reproyectar capa} y elegí \textbf{South America Albers Equal Area Conic} (buscá \texttt{102033} en el selector de CRS). Es una proyección equivalente, apropiada para medir superficies a escala continental. Si no la encontrás, definila como CRS personalizado con:
+    \begin{verbatim}
+    +proj=aea +lat_1=-5 +lat_2=-42 +lat_0=-32 +lon_0=-60
+    +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs
+    \end{verbatim}
+    Guardala como \texttt{cuencas\_albers.shp} y fijá el CRS del proyecto en esa misma proyección.
+    \item Andá a \textbf{Proyecto → Propiedades → General → Mediciones} y poné \textbf{Elipsoide: Ninguno / planimétrico}, y las unidades de superficie en kilómetros cuadrados. Con el elipsoide activado QGIS corrige por atrás la deformación de la proyección; para este ejercicio necesitamos medir sobre el plano.
+\end{enumerate}
+
+\subsection{Calcular el índice}
+
+Con la calculadora de campos sobre \texttt{cuencas\_albers.shp}, creá tres campos decimales:
+
+\begin{enumerate}
+    \item \texttt{perim\_km} con \texttt{\$perimeter / 1000}
+    \item \texttt{area\_km2} con \texttt{\$area / 1000000}
+    \item \texttt{ic} con la fórmula de Gravelius:
+    \begin{verbatim}
+        "perim_km" / (2 * sqrt(pi() * "area_km2"))
+    \end{verbatim}
+\end{enumerate}
+
+Clasificá cada cuenca según la tabla de umbrales.
+
+\subsection{Generalizar}
+
+Hasta acá replicamos el procedimiento estándar. Ahora vamos a hacerle una pregunta incómoda.
+
+\begin{enumerate}
+    \item Usá \textbf{Vectorial → Herramientas de geometría → Simplificar} sobre \texttt{cuencas\_albers.shp}, con método \textbf{Distancia (Douglas-Peucker)}.
+    \item Generá \textbf{tres versiones} con tolerancias crecientes. Como referencia, probá con 1.000, 5.000 y 20.000 metros, y ajustá según el tamaño de tus cuencas.
+    \item En cada versión, recalculá \texttt{perim\_km}, \texttt{area\_km2} e \texttt{ic}.
+    \item Completá esta tabla para \emph{una} de tus cuencas:
+\end{enumerate}
+
+\begin{center}
+\begin{tabular}{lccc}
+    \toprule
+    Versión & Perímetro (km) & Área (km$^2$) & $I_c$ \\
+    \midrule
+    Original & & & \\
+    Tolerancia 1 & & & \\
+    Tolerancia 2 & & & \\
+    Tolerancia 3 & & & \\
+    \bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Medir en otra proyección}
+
+Un último experimento, cuyo resultado vamos a explicar recién en la Parte C.
+
+\begin{enumerate}
+    \item Reproyectá \texttt{cuencas\_seleccion.shp} a \textbf{WGS 84 / Pseudo-Mercator} (\texttt{EPSG:3857}), la proyección que usan Google Maps, OpenStreetMap y casi todos los mapas de la web.
+    \item Recalculá \texttt{area\_km2} e \texttt{ic} en esta versión.
+    \item Compará contra los valores obtenidos en Albers, para las tres cuencas.
+\end{enumerate}
+
+\subsection{Preguntas de la Parte B}
+
+\begin{enumerate}
+    \item \textbf{Los resultados.} ¿Qué valor de $I_c$ obtuviste para cada cuenca y qué forma le corresponde según la tabla? ¿Qué comportamiento hidrológico esperarías de cada una frente a una tormenta intensa?
+
+    \item \textbf{La generalización.} Presentá la tabla de la Sección 3.6. ¿Qué cambió más al simplificar, el área o el perímetro? ¿Por qué te parece que uno es mucho más sensible que el otro? ¿Cuánto se movió el índice?
+
+    \item \textbf{La pregunta que importa.} Si el valor de $I_c$ depende de la tolerancia con la que se dibujó el polígono, y esa tolerancia es una decisión de quien produjo el dato, ¿qué significa clasificar una cuenca como ``oval redonda'' o ``oval oblonga''? ¿Sigue siendo útil el índice? ¿Bajo qué condición?
+
+    \item \textbf{La proyección.} Compará los valores de Albers y de Web Mercator. ¿Qué cambió más, el área o el índice? ¿El error en el área fue igual para las tres cuencas, o dependió de dónde está cada una? No hace falta que expliques por qué: describí lo que observaste y volvé a esta respuesta cuando termines la Parte C.
+
+    \item \textbf{La procedencia.} Según el metadato, ¿quién delimitó estas cuencas y quién las publica? ¿Por qué te parece que el IGN aclara que se trata de una republicación sin modificación?
+\end{enumerate}
+
+\section{Parte C: el mapa bicontinental y las proyecciones}
+
+\subsection{Toda proyección miente en algo}
+
+La Tierra es aproximadamente esférica y el papel es plano. No existe manera de aplanar una esfera sin deformarla: es un resultado matemático, no una limitación técnica que algún día se vaya a resolver. Toda proyección cartográfica \textbf{deforma algo}, y lo único que puede hacer el cartógrafo es elegir qué conservar y qué sacrificar.
+
+\begin{itemize}
+    \item \textbf{Conformes}: conservan los ángulos, y por lo tanto las formas \emph{locales}. Deforman las áreas, cada vez más lejos del punto o línea de contacto.
+    \item \textbf{Equivalentes} (o equiáreas): conservan las superficies. Deforman las formas.
+    \item \textbf{Equidistantes}: conservan las distancias, pero solo desde ciertos puntos o a lo largo de ciertas líneas.
+    \item \textbf{De compromiso}: no conservan nada exactamente, pero reparten el error para que ninguna deformación sea grosera.
+\end{itemize}
+
+Ninguna proyección puede ser conforme y equivalente a la vez. La Albers que usaste en la Parte B es equivalente; la Web Mercator es conforme. Con esta clasificación en la mano, volvé a mirar la pregunta 4 de la Parte B.
+
+\subsection{``WGS84'' no es una proyección}
+
+Es la confusión más común al empezar, y conviene desarmarla ahora.
+
+\begin{itemize}
+    \item \textbf{WGS 84} es un \emph{datum}: un elipsoide de referencia y su posición respecto de la Tierra. Define desde dónde se miden las coordenadas.
+    \item \textbf{EPSG:4326} es un \emph{sistema de coordenadas geográficas} que usa ese datum. Sus coordenadas son latitud y longitud, es decir \textbf{ángulos}, no metros.
+    \item Cuando un software dibuja EPSG:4326 en la pantalla, toma la longitud como si fuera $x$ y la latitud como si fuera $y$, y las grafica en un plano cartesiano. Eso \textbf{no es ``no proyectar''}: es proyectar en \textbf{equirrectangular} (o \textit{Plate Carrée}), sin avisar.
+\end{itemize}
+
+Uno de los tres mapas que vas a hacer es exactamente eso: la proyección implícita que aparece cuando uno cree que no está proyectando nada.
+
+\subsection{Un mapa oficial, y una ley}
+
+El primer mapa bicontinental oficial de la Argentina se publicó en 1947. En 2010, la \textbf{Ley 26.651} estableció que el mapa bicontinental confeccionado por el Instituto Geográfico Nacional debe usarse en todos los niveles del sistema educativo y exhibirse en todos los organismos públicos nacionales y provinciales.
+
+El IGN fundamenta ese mapa señalando que permite ver el territorio nacional \emph{en sus proporciones reales}, y que así se hace visible que el Sector Antártico Argentino equivale a casi un tercio del territorio continental americano. Hasta entonces lo habitual era representar la Antártida como un pequeño recuadro al margen.
+
+Para lograrlo, el IGN eligió una proyección \textbf{Acimutal Equiárea de Lambert}, con punto de tangencia en 40\textdegree S 60\textdegree O. Guardá este dato: vamos a volver sobre él en la última pregunta.
+
+\subsection{Los datos base}
+
+\begin{enumerate}
+    \item En la misma página de capas SIG del IGN que usaste en la Parte B, buscá el paquete \textbf{Mapa Argentina Bicontinental QGIS} y descargalo (unos 33~MB).
+    \item Descomprimí el ZIP. Vas a obtener una carpeta con el proyecto \texttt{Mapa\_Bicontinental\_qgis\_.qgs.qgz} y una subcarpeta \texttt{shapes} con seis capas vectoriales.
+    \item \textbf{No muevas ni renombres nada dentro de la carpeta.} El proyecto busca las capas por ruta relativa.
+    \item Abrí el proyecto. Si QGIS avisa que fue creado con una versión anterior (3.18), aceptá y seguí.
+    \item Hacé \textbf{Proyecto → Guardar como} con tu propio nombre, para conservar intacto el original del IGN.
+\end{enumerate}
+
+\subsection{Explorar antes de tocar}
+
+\begin{enumerate}
+    \item Mirá el CRS del proyecto en la barra de estado, abajo a la derecha, y después en \textbf{Proyecto → Propiedades → CRS}. No es un código EPSG estándar sino un CRS definido a medida por el IGN, llamado \texttt{Bicontinentalidad\_Argentina}:
+    \begin{verbatim}
+    +proj=laea +lat_0=-40 +lon_0=-60 +x_0=-90 +y_0=0
+    +datum=WGS84 +units=m +no_defs
+    \end{verbatim}
+    Leelo con la clasificación de la Sección 4.1: \texttt{laea} es \textit{Lambert Azimuthal Equal Area}, y \texttt{lat\_0} y \texttt{lon\_0} son el punto de tangencia. La definición del CRS dice, literalmente, qué proyección es y dónde está apoyada.
+
+    \item Mirá ahora el CRS de las capas (clic derecho \textbf{→ Propiedades → Información}). Vas a encontrar que \textbf{están en EPSG:4326}, no en la proyección del proyecto: los datos están guardados en coordenadas geográficas y QGIS los reproyecta al vuelo para mostrarlos.
+
+    La distinción entre \textbf{el CRS en que están guardados los datos} y \textbf{el CRS en que se los muestra} es una de las ideas centrales del curso. Un mismo archivo puede verse de infinitas maneras sin cambiar en absoluto.
+
+    \item Abrí el layout \textbf{Mapa Bicontinental} desde \textbf{Proyecto → Diseñadores de impresión}. Es la lámina oficial, hecha por cartógrafos profesionales. No la modifiques: miralas como referencia de qué elementos lleva un mapa serio. Cerrala cuando termines.
+\end{enumerate}
+
+\subsection{Sumar una capa propia}
+
+Agregale al mapa base \textbf{al menos una capa temática de tu elección}, descargada de la misma página del IGN: red vial, red ferroviaria, áreas protegidas, hidrografía, localidades. También podés reutilizar la capa de cuencas de la Parte B.
+
+\begin{enumerate}
+    \item Antes de mirar el mapa, verificá en \textbf{Propiedades → Información} en qué CRS está la capa nueva.
+    \item Ahora sí mirá el lienzo: cayó exactamente donde corresponde, aunque su CRS no sea el del proyecto. Pensá por qué.
+    \item Estilá la capa (doble clic \textbf{→ Simbología}). A escala bicontinental los grosores por defecto suelen tapar todo: bajá el ancho de línea y elegí un color que contraste sin competir con el mapa base.
+\end{enumerate}
+
+\textbf{Nota sobre legibilidad.} Algunas capas, como la red vial completa, se vuelven una maraña ilegible a escala continental. Si te pasa, filtrá (por ejemplo, quedándote solo con las rutas nacionales) o elegí otra capa. Que un dato sea correcto no significa que sea representable a cualquier escala.
+
+\subsection{Armar la lámina}
+
+Vas a crear tu propia lámina, más simple que la del IGN, con \textbf{los tres mapas en una sola hoja}.
+
+\begin{enumerate}
+    \item \textbf{Proyecto → Nuevo diseñador de impresión}. Clic derecho sobre la página \textbf{→ Propiedades de la página}: A4 vertical, o A3 vertical si querés más aire. Los mapas van a quedar altos y angostos.
+    \item En la ventana principal, apagá la capa de \textbf{topónimos}: a este tamaño los nombres se amontonan.
+    \item Con la herramienta \textbf{Agregar mapa}, dibujá un rectángulo. Con el elemento seleccionado, abrí \textbf{Propiedades del elemento}: ahí hay un campo \textbf{CRS}. Este es el punto clave de la parte: \textbf{cada elemento de mapa puede tener su propia proyección}, independiente de la del proyecto y de la de los demás mapas de la hoja.
+    \item Creá \textbf{tres} elementos del mismo tamaño, uno al lado del otro:
+    \begin{center}
+    \begin{tabular}{clc}
+        \toprule
+        Mapa & CRS & Código \\
+        \midrule
+        1 & Bicontinentalidad\_Argentina (la del IGN) & \texttt{USER:100010} \\
+        2 & WGS 84 (coordenadas geográficas) & \texttt{EPSG:4326} \\
+        3 & WGS 84 / Pseudo-Mercator (Web Mercator) & \texttt{EPSG:3857} \\
+        \bottomrule
+    \end{tabular}
+    \end{center}
+    El identificador \texttt{USER:100010} puede variar según tu instalación: reconocelo por el nombre.
+    \item Para encuadrar cada mapa usá la herramienta \textbf{Mover contenido del elemento}, o ajustá el valor de \textbf{Escala} en las propiedades.
+    \item \textbf{Aviso}: es esperable que el mapa 3 se comporte de manera extraña. No es un error tuyo ni de tu instalación. Anotá qué pasa, porque es una de las preguntas.
+\end{enumerate}
+
+\subsubsection*{Elementos obligatorios}
+
+Cada uno de los tres mapas debe llevar:
+
+\begin{itemize}
+    \item \textbf{Cuadrícula de coordenadas} con anotaciones de latitud y longitud. En \textbf{Propiedades del elemento → Cuadrículas}, agregá una con un intervalo razonable (por ejemplo 10\textdegree) y activá las anotaciones. \textbf{No es decorativa}: es lo que hace visible la proyección. Sin cuadrícula solo se ven contornos distintos; con cuadrícula se ve \emph{por qué} son distintos.
+    \item \textbf{Barra de escala}, \textbf{flecha de norte}, y una \textbf{etiqueta} con el nombre de la proyección.
+\end{itemize}
+
+Y la lámina en conjunto: título, \textbf{leyenda} que identifique tu capa temática, nombre de los integrantes y fuente de los datos.
+
+Exportá con \textbf{Diseño → Exportar como imagen}, en PNG a 200~dpi o más.
+
+\subsection{Preguntas de la Parte C}
+
+\begin{enumerate}
+    \item \textbf{La cuadrícula.} Describí cómo se ven los meridianos y los paralelos en cada uno de los tres mapas: ¿son rectos o curvos?, ¿se cruzan en ángulo recto?, ¿están igualmente espaciados? Una línea por mapa alcanza.
+
+    \item \textbf{La Antártida.} Compará su tamaño respecto de la porción continental en los tres mapas. ¿En cuál dirías que la proporción es correcta? ¿Cómo lo sabés?
+
+    \item \textbf{Web Mercator.} ¿Qué pasó al construir el tercer mapa? Describí el síntoma y proponé una explicación. \textit{Pista}: averiguá hasta qué latitud está definida esa proyección y comparala con la latitud del Polo Sur.
+
+    \item \textbf{Las barras de escala.} Tenés tres barras de escala en la misma hoja para el mismo territorio. ¿Dicen lo mismo? ¿Puede una barra de escala única ser válida para todo un mapa de escala continental? ¿En cuál de los tres confiarías más?
+
+    \item \textbf{Tu capa.} ¿En qué CRS estaba? ¿Coincidía con el del proyecto? Si no, ¿por qué se ubicó igual en el lugar correcto? ¿Se modificó el archivo original al cargarlo?
+
+    \item \textbf{La cobertura de los datos.} ¿Tu capa temática cubre todo el territorio representado en el mapa bicontinental o solo una parte? Si hay zonas sin datos, ¿cuáles son, y qué te parece que explica esa ausencia?
+
+    \item \textbf{La ley.} La Ley 26.651 obliga a usar en todas las escuelas del país un mapa hecho en una proyección \emph{equivalente}. Podría haberse elegido una conforme, o una de compromiso. ¿Por qué te parece que se eligió esa? ¿Qué se estaba tratando de mostrar, y qué se estaba dispuesto a deformar a cambio?
+
+    \item \textbf{Cierre.} Volvé a la pregunta 4 de la Parte B, donde comparaste el área y el índice de Gravelius entre Albers y Web Mercator. Con la clasificación de proyecciones de la Sección 4.1, ¿podés ahora explicar por qué el área cambió mucho y el índice casi nada?
+\end{enumerate}
+
+\section{Entrega}
+
+Un único documento con:
+
+\begin{enumerate}
+    \item Las respuestas a las preguntas de las tres partes, con las tablas que se piden en cada una.
+    \item El \textbf{PNG} de la lámina de la Parte C.
+    \item Capturas de pantalla del mapa de la Parte A (muertes por hectárea) y de la Parte B (las tres cuencas).
+\end{enumerate}
+
+Y por separado, los \textbf{proyectos QGIS} (\texttt{.qgz}) de cada parte.
+
+\end{document}

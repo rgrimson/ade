@@ -1,0 +1,297 @@
+\documentclass{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[spanish]{babel}
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{hyperref}
+
+% pdflatex no trae definida la flecha U+2192 (la usamos en las rutas de menús)
+\ifdefined\DeclareUnicodeCharacter
+  \DeclareUnicodeCharacter{2192}{\ensuremath{\rightarrow}}
+\fi
+
+% ---------- Encabezado institucional ----------
+% Requiere lcd.png y logos.png en la misma carpeta que este .tex
+\newcommand{\encabezadocatedra}{%
+  \noindent
+  \begin{minipage}[c]{0.36\textwidth}%
+    \includegraphics[height=14mm]{lcd.png}%
+  \end{minipage}%
+  \hfill
+  \begin{minipage}[c]{0.52\textwidth}%
+    \raggedleft
+    \includegraphics[height=12mm]{logos.png}%
+  \end{minipage}%
+  \par\vspace{3mm}%
+  \noindent\rule{\textwidth}{0.4pt}%
+  \par\vspace{6mm}%
+}
+
+% Redefinimos \maketitle para que el encabezado quede en la misma pagina
+% que el titulo (el \maketitle original de article hace un \newpage).
+\makeatletter
+\renewcommand{\@maketitle}{%
+  \encabezadocatedra
+  \begin{center}%
+    {\LARGE\bfseries \@title \par}%
+    \vskip 1.2em%
+    {\large \@author \par}%
+  \end{center}%
+  \par\vskip 1.5em%
+}
+\renewcommand{\maketitle}{\par\@maketitle\thispagestyle{plain}%
+  \setcounter{footnote}{0}}
+\makeatother
+% ----------------------------------------------
+
+\title{Trabajo Práctico 2: Áreas Verdes por Barrio en CABA}
+\author{Análisis de Datos Espaciales}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Objetivo}
+
+Estimar el porcentaje de área verde por barrio en la Ciudad Autónoma de Buenos Aires (CABA) utilizando el índice NDVI a partir de imágenes Sentinel-2, y visualizar los resultados en QGIS.
+
+\section{Requisitos}
+\begin{itemize}
+    \item \textbf{QGIS} (versión 3.x o superior).
+    \item Imagen Sentinel-2 (¡sin nubes!) con bandas B04 (Red) y B08 (NIR), ambas de 10~m de resolución, descargada del \href{https://dataspace.copernicus.eu/}{Copernicus Data Space Ecosystem}.
+    \item Shapefile de barrios de CABA (por ej.\ de \href{https://data.buenosaires.gob.ar/}{BA Data}).
+\end{itemize}
+
+\section{El CRS, otra vez, pero por otro motivo}
+
+En el TP1 vimos que elegir una proyección cambiaba \emph{cómo se veía} el mapa: la Antártida se agrandaba o se achicaba, la cuadrícula se curvaba, la forma del país se estiraba. Todo eso era visible.
+
+En este TP la proyección vuelve a aparecer, pero con una consecuencia distinta y bastante más peligrosa: \textbf{cambia el resultado de las mediciones}. Y no lo hace de manera visible. Un mapa mal proyectado puede verse perfectamente normal y devolver superficies equivocadas en un 50\,\%, sin ninguna señal de que algo anda mal.
+
+Antes de calcular nada, entonces, vamos a medir el problema.
+
+\subsection{Preparar la capa de barrios}
+
+\begin{enumerate}
+    \item Cargá el shapefile de barrios de CABA y fijate en qué CRS está. Lo más probable es que sea \texttt{EPSG:4326}, en grados.
+    \item Editá la capa para descartar las columnas que no vamos a usar. Dejá solo la columna con el nombre del barrio y renombrala a \texttt{barrio}.
+    \item Guardala como \texttt{barrios\_prep.shp}. \textbf{Usá esta capa —y no la original— en todos los pasos siguientes.}
+\end{enumerate}
+
+\subsection{Apagar el elipsoide}
+
+Este paso es imprescindible y no es evidente.
+
+Andá a \textbf{Proyecto → Propiedades → General → Mediciones} y poné \textbf{Elipsoide: Ninguno / planimétrico}.
+
+Por defecto QGIS calcula las superficies sobre el elipsoide, es decir, corrige por atrás la deformación de la proyección y te devuelve el área verdadera sin avisarte. Es un comportamiento razonable para el usuario final, pero acá nos impide ver el fenómeno que queremos estudiar. Con el elipsoide apagado, \texttt{\$area} mide sobre el plano proyectado: exactamente lo que queremos.
+
+\subsection{Reproyectar a tres CRS y medir}
+
+Con \textbf{Vector → Herramientas de gestión de datos → Reproyectar capa}, generá tres copias de \texttt{barrios\_prep.shp}:
+
+\begin{center}
+\begin{tabular}{llc}
+    \toprule
+    Copia & CRS & Tipo de proyección \\
+    \midrule
+    A & Bicontinentalidad\_Argentina (la del TP1) & Equivalente \\
+    B & WGS 84 / UTM zona 21S \quad \texttt{EPSG:32721} & Conforme \\
+    C & WGS 84 / Pseudo-Mercator \quad \texttt{EPSG:3857} & Conforme \\
+    \bottomrule
+\end{tabular}
+\end{center}
+
+En cada una de las tres copias, agregá un campo \texttt{sup\_ha} (decimal) con la expresión:
+
+\begin{verbatim}
+    $area / 10000
+\end{verbatim}
+
+Elegí tres barrios cualesquiera y completá esta tabla, tomando la copia A como referencia:
+
+\begin{center}
+\begin{tabular}{lcccc}
+    \toprule
+    Barrio & A (ha) & B (ha) & C (ha) & Error de C respecto de A \\
+    \midrule
+    \\[-2ex]
+    \\[-2ex]
+    \\[-2ex]
+    \bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Predecir antes de mirar}
+
+En la proyección Mercator el factor de escala vale $1/\cos\varphi$ en \emph{cada} dirección, donde $\varphi$ es la latitud. Como el área es un producto de dos longitudes, se infla según:
+
+\begin{equation*}
+    \frac{1}{\cos^{2}\varphi}
+\end{equation*}
+
+CABA está a unos 34,6\textdegree{} de latitud sur. Calculá ese factor con una calculadora antes de mirar la tabla, y después comparalo con lo que te dio la columna C.
+
+Fijate lo que esto significa: no estamos hablando de la Antártida ni de Groenlandia, sino de veinte kilómetros de ciudad, a una latitud media, en un mapa que en pantalla se ve absolutamente normal.
+
+\subsection{Para el resto del TP}
+
+Seguí trabajando con la copia \textbf{B (UTM 21S)}, y fijá el CRS del proyecto en \texttt{EPSG:32721}.
+
+La elegimos, y no la equiárea, aunque sea una proyección conforme: es el CRS nativo de las imágenes Sentinel-2 para esta zona, así que evitamos remuestrear el ráster. Como acabás de comprobar en la tabla, a la escala de una ciudad su error de superficie es despreciable. \textbf{Esa es la idea general: la magnitud de la deformación depende de la extensión del territorio, y una proyección puede ser inaceptable a escala continental y perfectamente adecuada a escala urbana.}
+
+Ahora sí, agregá a la copia B un campo \texttt{sup\_barrio} (decimal) con \texttt{\$area / 10000}, que vamos a usar más adelante.
+
+\section{Pasos}
+
+\subsection{Cargar y ajustar el ráster}
+\begin{enumerate}
+    \item Cargá la imagen Sentinel-2 (bandas B04 y B08).
+    \begin{itemize}
+        \item Al cargar los archivos JP2, QGIS les asigna nombres largos del tipo \texttt{T21HUB\_\allowbreak 20240115T133829\_\allowbreak B08\_\allowbreak 10m}. \textbf{Renombrá las capas a \texttt{B4} y \texttt{B8}}, o las fórmulas de la calculadora de ráster no van a funcionar tal como están escritas más abajo.
+        \item Puede resultar conveniente recortar las imágenes para trabajar con rásteres que apenas excedan CABA, lo que requerirá menos memoria y menos poder de cómputo (\textbf{Ráster → Extracción → Recortar}). Lo más sencillo es recortar usando el lienzo actual, ajustado convenientemente.
+        \item Anotá la \textbf{fecha de la imagen}: la vas a necesitar para la entrega.
+    \end{itemize}
+    \item Si querés, como referencia de fondo, agregá una capa base de Google Satellite mediante \textbf{XYZ Tiles}:
+    \begin{itemize}
+        \item URL: \nolinkurl{https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}}.
+    \end{itemize}
+    \item Descartá las capas temporarias.
+\end{enumerate}
+
+\subsection{Calcular NDVI}
+\begin{enumerate}
+    \item Andá a \textbf{Ráster → Calculadora de ráster}.
+    \item Ingresá la fórmula del NDVI:
+    \begin{verbatim}
+        ( "B8@1" - "B4@1" ) / ( "B8@1" + "B4@1" )
+    \end{verbatim}
+    \item Guardá el resultado como \texttt{NDVI\_CABA.tif}.
+\end{enumerate}
+
+\subsection{Crear máscara de áreas verdes}
+\begin{enumerate}
+    \item En la \textbf{Calculadora de ráster}, aplicá:
+    \begin{verbatim}
+        ("NDVI_CABA@1" > 0.3) * 1
+    \end{verbatim}
+    \item Guardá como \texttt{mascara\_verde.tif} (valores 1 = verde, 0 = no verde).
+\end{enumerate}
+
+\subsection{Vectorizar la máscara}
+\begin{enumerate}
+    \item Andá a \textbf{Ráster → Conversión → Vectorizar (Polígonos)}.
+    \item Seleccioná \texttt{mascara\_verde.tif}.
+    \item Desde la tabla de atributos de la capa resultante, descartá los polígonos con \texttt{DN=0} (áreas no verdes) y, luego, la columna \texttt{DN}.
+    \item Guardá como \texttt{areas\_verdes.shp}.
+\end{enumerate}
+
+\subsection{Intersectar con barrios y disolver}
+\begin{enumerate}
+    \item Usá \textbf{Vector → Geoprocesamiento → Intersección}:
+    \begin{itemize}
+        \item Capa de entrada: \texttt{areas\_verdes.shp}.
+        \item Capa de superposición: \texttt{barrios\_prep.shp}.
+        \item Observá los polígonos resultantes: su relación con los barrios y con la imagen de fondo.
+    \end{itemize}
+    \item Usá \textbf{Vector → Geoprocesamiento → Disolver}:
+    \begin{itemize}
+        \item Capa de entrada: \texttt{intersection} (la creada recién).
+        \item Atributo de disolución: \texttt{barrio}.
+        \item Nuevamente: observá los polígonos resultantes y su relación con los barrios.
+    \end{itemize}
+\end{enumerate}
+
+\subsection{Calcular áreas verdes}
+\begin{enumerate}
+    \item Abrí la tabla de atributos y creá un campo \texttt{sup\_areave} (decimal, en hectáreas) con \texttt{\$area / 10000}.
+    \item Guardá como \texttt{areas\_verdes\_por\_barrio.shp}.
+    \item Descartá las capas temporarias.
+\end{enumerate}
+
+\subsection{Unir tablas y calcular porcentaje}
+\begin{enumerate}
+    \item Agregá el campo \texttt{sup\_areave} a la tabla de barrios:
+    \begin{itemize}
+        \item En \texttt{barrios\_prep.shp}, abrí \textbf{Propiedades → Uniones}. Uní la capa \texttt{areas\_verdes\_por\_barrio.shp} por los campos que indican el nombre del barrio en ambas capas. Marcá la opción de unir solamente campos seleccionados, elegí \texttt{sup\_areave}, y desactivá el prefijo de nombre de campo.
+    \end{itemize}
+    \item Antes de seguir, mirá la tabla de atributos: \textbf{¿hay barrios con la celda vacía?} Anotá cuántos y cuáles, porque hay una pregunta al respecto.
+    \item Calculá el porcentaje de área verde en un campo nuevo llamado \texttt{pct\_verde} (decimal):
+    \begin{verbatim}
+        100 * coalesce("sup_areave", 0) / "sup_barrio"
+    \end{verbatim}
+    \item \textbf{Cuidado con los nombres de campo en shapefiles}: el formato trunca los nombres a 10 caracteres. Por eso usamos \texttt{pct\_verde} y no \texttt{porcentaje\_verde}, que quedaría convertido en \texttt{porcentaj}.
+    \item Guardá como \texttt{barrios\_con\_areas\_verdes.shp}. Al guardar, la unión se materializa como campo real de la capa.
+\end{enumerate}
+
+\subsection{Método alternativo: estadísticas zonales}
+
+Todo el tramo de las secciones 4.4 a 4.7 se puede reemplazar por una sola herramienta que trabaja directamente sobre el ráster.
+
+\begin{enumerate}
+    \item Sobre \texttt{barrios\_prep.shp}, corré \textbf{Ráster → Análisis de datos → Estadísticas zonales}.
+    \begin{itemize}
+        \item Capa de zonas: \texttt{barrios\_prep.shp}.
+        \item Capa ráster: \texttt{mascara\_verde.tif}.
+        \item Estadísticas a calcular: \textbf{suma} y \textbf{conteo}.
+        \item Prefijo de los campos de salida: \texttt{zs\_}.
+    \end{itemize}
+    \item Como la máscara vale 1 en los píxeles verdes y 0 en el resto, la suma es la cantidad de píxeles verdes y el conteo es el total de píxeles del barrio. Guardá en un campo \texttt{pct\_zonal}:
+    \begin{verbatim}
+        100 * "zs_sum" / "zs_count"
+    \end{verbatim}
+    \item Poné \texttt{pct\_verde} y \texttt{pct\_zonal} lado a lado en la tabla de atributos y calculá la diferencia entre ambos.
+\end{enumerate}
+
+\section{La lámina}
+
+Armá un layout con el mapa de resultados, aplicando lo que aprendiste en el TP1.
+
+\begin{enumerate}
+    \item Asigná estilo \textbf{graduado} a la capa \texttt{barrios\_con\_areas\_verdes.shp}:
+    \begin{itemize}
+        \item Columna: \texttt{pct\_verde}.
+        \item Modo: \textbf{Intervalos iguales}, con 5 a 7 clases. Con 48 barrios, más clases que eso vuelven el mapa ilegible.
+        \item Probá también el modo \textbf{Cuantiles} y compará los dos mapas.
+        \item Esquema de colores: armá una rampa adecuada, por ejemplo de gris cemento a verde oscuro.
+    \end{itemize}
+    \item Agregá etiquetas con el nombre del barrio y el porcentaje de área verde.
+    \item La lámina debe llevar los mismos elementos que exigimos en el TP1: título, leyenda, barra de escala, flecha de norte, cuadrícula de coordenadas, fuente de los datos y nombre de los integrantes.
+    \item Exportá en PNG a 200~dpi o más.
+\end{enumerate}
+
+\section{Preguntas}
+
+\begin{enumerate}
+    \item \textbf{La tabla de superficies.} Adjuntá la tabla de la Sección 3.3 completa. ¿Coincidió el error de la columna C con el factor $1/\cos^{2}\varphi$ que calculaste? ¿Por qué el error de la columna B es tan chico si UTM también es una proyección conforme?
+
+    \item \textbf{El elipsoide.} ¿Qué habría pasado con la tabla si no hubieras apagado el elipsoide en Propiedades del proyecto? ¿Te parece bien que ese sea el comportamiento por defecto de QGIS?
+
+    \item \textbf{Vacío y cero.} ¿Cuántos barrios quedaron con la celda vacía después de la unión? El \texttt{coalesce} los convierte en 0. ¿Es correcto hacerlo en este caso? Pensá la diferencia entre ``no sé cuánto tiene'' y ``sé que no tiene''.
+
+    \item \textbf{Los dos métodos.} ¿En qué barrios la diferencia entre \texttt{pct\_verde} y \texttt{pct\_zonal} es mayor? ¿Tiene relación con el tamaño o la forma del barrio? El método vectorial recorta los polígonos contra el límite del barrio; las estadísticas zonales asignan cada píxel entero a una zona. ¿Cómo explica eso lo que observás en los bordes? ¿Cuál de los dos usarías para procesar las 2.300 localidades del país?
+
+    \item \textbf{La barra de escala.} En el TP1 discutimos si la barra de escala era honesta, y en dos de los tres mapas no lo era. ¿Y en este mapa? ¿Qué cambió?
+
+    \item \textbf{Los resultados.} ¿Cuáles son los tres barrios con mayor y con menor porcentaje de área verde? ¿Coincide con lo que esperabas?
+
+    \item \textbf{Fuentes de error.} Identificá al menos tres limitaciones del procedimiento y explicá en qué dirección afectarían el resultado: ¿sobreestiman o subestiman el área verde?
+
+    \item \textbf{Qué estamos midiendo.} ¿El porcentaje de área verde así calculado es una buena medida del ``espacio verde disponible'' para los habitantes de un barrio? ¿Qué mide realmente y qué no?
+\end{enumerate}
+
+\section{Entrega}
+
+\begin{enumerate}
+    \item El \textbf{PNG} de la lámina.
+    \item El shapefile \texttt{barrios\_con\_areas\_verdes.shp} con todos sus archivos asociados.
+    \item El \textbf{proyecto QGIS} (\texttt{.qgz}).
+    \item La \textbf{fecha y el identificador de la escena} Sentinel-2 utilizada, y el CRS del proyecto.
+    \item Las \textbf{respuestas} a las ocho preguntas, incluyendo la tabla de la Sección 3.3.
+\end{enumerate}
+
+\end{document}
